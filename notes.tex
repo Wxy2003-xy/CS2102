@@ -14,6 +14,11 @@
 \newtheorem{corollary}[theorem]{Corollary}
 \newtheorem{definition}[theorem]{Definition}
 \usepackage{listings}  % for code listings
+\usepackage{tikz}
+\usetikzlibrary{er}  % for ER diagram shapes
+\tikzset{
+  link/.style={-} % a simple straight line
+}
 
 \lstset{frame=tb,
   language=C,
@@ -39,5 +44,20 @@
 \author{Wang Xiyu}
 \date{}
 \maketitle
+
+
+\begin{tikzpicture}[node distance=2cm, every edge/.style={link}]
+  % Entities
+  \node[entity] (student) {Student};
+  \node[entity, right of=student] (course) {Course};
+
+  % Relationship
+  \node[relationship, above of=course] (enrolls) {Enrolls};
+
+  % Connect
+  \path (student) edge (enrolls)
+        (course) edge (enrolls);
+\end{tikzpicture}
+
 
 \end{document}
