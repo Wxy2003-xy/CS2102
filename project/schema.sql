@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS Orders (
         Card IS NULL OR Card = '' OR Card ~ '^[0-9]{4}(-[0-9]{4}){3}$'
     ),
     CONSTRAINT orders_phone_ck CHECK (
-        Phone IS NULL OR Phone = '' OR Phone ~ '^[0-9]{8}$'
+        Phone IS NULL OR Phone ~ '^[0-9]{8}$'
     )
 );
 
