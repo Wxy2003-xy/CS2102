@@ -1,63 +1,510 @@
-\documentclass{article}
-\usepackage[utf8]{inputenc}    % For UTF-8 character encoding
-\usepackage[T1]{fontenc}       % For proper font encoding
-\usepackage{lmodern}           % Improved font rendering
-\usepackage{amsmath}   % For advanced mathematical formatting
-\usepackage{amssymb}   % For mathematical symbols
-\usepackage{geometry}  % Adjust page margins
-\usepackage{enumerate} % For custom lists
-\usepackage{xcolor}  % for coloring
-\usepackage{amsthm}
-\usepackage{pdfpages}
-\newtheorem{theorem}{Theorem}[section]
-\newtheorem{lemma}[theorem]{Lemma}
-\newtheorem{corollary}[theorem]{Corollary}
-\newtheorem{definition}[theorem]{Definition}
-\usepackage{listings}  % for code listings
-\usepackage{tikz}
-\usetikzlibrary{er}  % for ER diagram shapes
-\tikzset{
-  link/.style={-} % a simple straight line
+\documentclass[10pt]{article}
+\usepackage[a4paper,margin=0.9in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[tt=false]{libertine}
+\usepackage[libertine]{newtxmath}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\definecolor{dkgray}{RGB}{50,50,50}
+\definecolor{lg}{RGB}{248,248,248}
+\lstdefinestyle{psql}{
+  language=SQL,
+  basicstyle=\small\ttfamily,
+  keywordstyle=\color{blue!60!black}\bfseries,
+  stringstyle=\color{green!40!black},
+  commentstyle=\color{dkgray},
+  backgroundcolor=\color{lg},
+  showstringspaces=false,
+  columns=fullflexible,
+  upquote=true,
+  frame=single,
+  framerule=0.3pt,
+  breaklines=true
 }
+\setlist[itemize]{noitemsep,topsep=2pt}
+\setlist[enumerate]{noitemsep,topsep=2pt}
 
-\lstset{frame=tb,
-  language=C,
-  aboveskip=3mm,
-  belowskip=3mm,
-  showstringspaces=false,   
-  columns=flexible,
-  basicstyle={\small\ttfamily},
-  numbers=none,
-  numberstyle=\tiny\color{gray},
-  keywordstyle=\color{blue},
-  commentstyle=\color{brown},
-  stringstyle=\color{orange},
-  breaklines=true,
-  breakatwhitespace=true,
-  tabsize=3
-}
-\geometry{top=1in, bottom=1in, left=1in, right=1in}
+\title{PostgreSQL Syntax: A Concise but Complete Practical Introduction}
+\author{(for study use)}
+\date{\today}
 
 \begin{document}
-
-\title{}
-\author{Wang Xiyu}
-\date{}
 \maketitle
+\tableofcontents
 
+\section{Mindset \& Scope}
+This guide targets the high–value subset of PostgreSQL syntax you will actually use. It groups syntax by responsibility:
+\begin{itemize}
+  \item \textbf{DDL} (define structure): \texttt{CREATE/ALTER/DROP}, types, constraints, indexes, partitioning, schemas.
+  \item \textbf{DML} (change data): \texttt{INSERT/UPDATE/DELETE/MERGE}.
+  \item \textbf{DQL} (query data): \texttt{SELECT}, joins, subqueries, CTE, window functions, aggregates.
+  \item \textbf{TCL} (transactions): \texttt{BEGIN/COMMIT/ROLLBACK}, savepoints, isolation.
+  \item \textbf{DCL} (control): roles, privileges, \texttt{GRANT/REVOKE}.
+\end{itemize}
+Postgres–specifics: \textbf{arrays}, \textbf{JSON}, \textbf{range types}, \textbf{full–text search}, \textbf{generated columns}, \textbf{identity/sequence}, \textbf{UPSERT}, \textbf{recursive CTEs}, \textbf{indexes} (btree/hash/brin/gin/gist), \textbf{partitioning}, \textbf{locks}, \textbf{PL/pgSQL}, \textbf{extensions}.\\
+\textit{Caveat}: “Complete” SQL is unbounded (extensions, planner hints, FDWs). This is the core, with idiomatic examples and pitfalls.
 
-\begin{tikzpicture}[node distance=2cm, every edge/.style={link}]
-  % Entities
-  \node[entity] (student) {Student};
-  \node[entity, right of=student] (course) {Course};
+\section{Data Types (core + PG extras)}
+\begin{itemize}
+  \item Numeric: \texttt{smallint,int,bigint,decimal(p,s),numeric,real,double precision, serial/bigserial (legacy)}.
+  \item Text/byte: \texttt{text, varchar(n), char(n), bytea}.
+  \item Temporal: \texttt{date,time, timestamp [with(out) time zone], interval}.
+  \item Boolean: \texttt{boolean}.
+  \item UUID, \texttt{json,jsonb}, \texttt{xml}, \texttt{cidr,inet,macaddr}, \texttt{money}.
+  \item Arrays: \texttt{int[]}, \texttt{text[]}, multidimensional \texttt{int[][]}.
+  \item Ranges: \texttt{int4range, int8range, numrange, tsrange, tstzrange, daterange}.
+  \item Composite \& enum: \texttt{CREATE TYPE}.
+\end{itemize}
 
-  % Relationship
-  \node[relationship, above of=course] (enrolls) {Enrolls};
+\section{Schemas, Databases, Search Path}
+\begin{lstlisting}[style=psql]
+-- create and use a schema
+CREATE SCHEMA app AUTHORIZATION app_user;
+SET search_path TO app, public;  -- resolves unqualified names
+\end{lstlisting}
+\textbf{Pitfall}: if you rely on \texttt{public}, lock down \texttt{CREATE} privileges for security.
 
-  % Connect
-  \path (student) edge (enrolls)
-        (course) edge (enrolls);
-\end{tikzpicture}
+\section{DDL: Tables, Constraints, Identity, Generated Columns}
+\subsection{Create tables}
+\begin{lstlisting}[style=psql]
+CREATE TABLE app.users (
+  user_id      bigserial PRIMARY KEY,         -- legacy; prefer identity
+  email        text NOT NULL UNIQUE,
+  full_name    text,
+  is_active    boolean NOT NULL DEFAULT true,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  -- identity (SQL standard)
+  v2_id        bigint GENERATED ALWAYS AS IDENTITY,
+  -- generated column (stored)
+  email_domain text GENERATED ALWAYS AS (split_part(email, '@', 2)) STORED,
+  -- FK with actions
+  org_id       bigint REFERENCES app.orgs(org_id)
+               ON UPDATE CASCADE ON DELETE SET NULL,
+  -- check constraint
+  CONSTRAINT email_ok CHECK (position('@' IN email) > 1)
+);
+\end{lstlisting}
+\textbf{Notes}: prefer \texttt{IDENTITY} over \texttt{serial}; generated columns require \texttt{STORED}.
 
+\subsection{Altering \& dropping}
+\begin{lstlisting}[style=psql]
+ALTER TABLE app.users ADD COLUMN tags text[] DEFAULT '{}'::text[];
+ALTER TABLE app.users ALTER COLUMN full_name SET NOT NULL;
+ALTER TABLE app.users DROP COLUMN tags;
+DROP TABLE IF EXISTS app.users CASCADE;
+\end{lstlisting}
+
+\subsection{Indexes (btree default) and advanced types}
+\begin{lstlisting}[style=psql]
+-- btree for equality/range
+CREATE INDEX ON app.users (email);
+-- expression index: matches WHERE lower(email)=...
+CREATE INDEX users_email_lower_idx ON app.users ((lower(email)));
+-- partial index: sparse filtered
+CREATE INDEX users_active_idx ON app.users (created_at) WHERE is_active;
+-- unique multi-column
+CREATE UNIQUE INDEX users_org_email_uniq ON app.users (org_id, email);
+
+-- GIN for arrays|jsonb|full-text
+CREATE INDEX users_tags_gin ON app.users USING GIN (tags);
+-- JSONB path ops
+CREATE INDEX users_profile_gin ON app.users USING GIN ((profile jsonb_path_ops));
+-- GiST example (ranges, geo)
+CREATE INDEX events_time_gist ON app.events USING GIST (when_range);
+-- BRIN for very large, naturally clustered tables
+CREATE INDEX logs_brin ON app.logs USING BRIN (ts);
+\end{lstlisting}
+\textbf{Pitfall}: \texttt{LIKE 'prefix\%'} benefits from \texttt{btree} only with \texttt{text\_pattern\_ops} or \texttt{citext} / expression indexes (e.g., \texttt{lower()}).
+
+\section{DML: INSERT, UPDATE, DELETE, MERGE, UPSERT}
+\begin{lstlisting}[style=psql]
+-- INSERT
+INSERT INTO app.users (email, full_name) VALUES
+  ('a@x.com','A'), ('b@x.com','B')
+RETURNING user_id;
+
+-- INSERT .. SELECT
+INSERT INTO app.audit(email, at) SELECT email, now() FROM app.users WHERE is_active;
+
+-- UPSERT
+INSERT INTO app.users (email, full_name)
+VALUES ('a@x.com','New Name')
+ON CONFLICT (email) DO UPDATE
+  SET full_name = EXCLUDED.full_name, updated_at = now();
+
+-- MERGE (PG15+)
+MERGE INTO app.inventory AS t
+USING (VALUES (1,'USB-C',10),(2,'HDMI',5)) AS s(id,name,qty)
+ON t.id = s.id
+WHEN MATCHED THEN UPDATE SET qty = t.qty + s.qty
+WHEN NOT MATCHED THEN INSERT (id,name,qty) VALUES (s.id,s.name,s.qty);
+
+-- UPDATE
+UPDATE app.users SET is_active = false WHERE last_login < now() - interval '180 days'
+RETURNING user_id;
+
+-- DELETE
+DELETE FROM app.users WHERE is_active = false AND created_at < now() - interval '1 year';
+\end{lstlisting}
+
+\section{DQL: SELECT Core}
+\subsection{Projection, filtering, ordering, limits}
+\begin{lstlisting}[style=psql]
+SELECT user_id, email, created_at
+FROM app.users
+WHERE is_active AND created_at >= date_trunc('month', now())
+ORDER BY created_at DESC
+LIMIT 20 OFFSET 0;  -- prefer keyset pagination for scale
+\end{lstlisting}
+
+\subsection{Joins}
+\begin{lstlisting}[style=psql]
+SELECT u.user_id, u.email, o.name AS org
+FROM app.users u
+JOIN app.orgs o ON o.org_id = u.org_id
+LEFT JOIN app.subscriptions s ON s.user_id = u.user_id
+WHERE s.active IS DISTINCT FROM false;
+\end{lstlisting}
+\textbf{Nits}: use \texttt{IS DISTINCT FROM} to handle NULL-safe equality.
+
+\subsection{Aggregates \& GROUP BY}
+\begin{lstlisting}[style=psql]
+SELECT org_id, count(*) AS users, avg(age) AS avg_age
+FROM app.users
+GROUP BY org_id
+HAVING count(*) > 10
+ORDER BY users DESC;
+\end{lstlisting}
+
+\subsection{Window functions (analytic)}
+\begin{lstlisting}[style=psql]
+SELECT
+  user_id, email,
+  row_number() OVER (PARTITION BY org_id ORDER BY created_at) AS rn,
+  avg(age)    OVER (PARTITION BY org_id) AS org_avg_age
+FROM app.users;
+\end{lstlisting}
+\textbf{Concept link}: aggregation collapses rows; windows compute per-row analytics without collapsing.
+
+\subsection{Subqueries \& CTEs}
+\begin{lstlisting}[style=psql]
+WITH active AS (
+  SELECT user_id, org_id FROM app.users WHERE is_active
+)
+SELECT o.name, count(a.user_id)
+FROM active a JOIN app.orgs o USING(org_id)
+GROUP BY o.name;
+\end{lstlisting}
+\textbf{Nitpick}: CTEs are \emph{optimization fences} before PG12; from PG12 they can inline. Avoid unnecessary CTEs in hot paths.
+
+\subsection{Recursive CTE}
+\begin{lstlisting}[style=psql]
+WITH RECURSIVE org_tree AS (
+  SELECT org_id, parent_id, name, 1 AS lvl
+  FROM app.orgs WHERE parent_id IS NULL
+  UNION ALL
+  SELECT c.org_id, c.parent_id, c.name, p.lvl+1
+  FROM app.orgs c JOIN org_tree p ON c.parent_id = p.org_id
+)
+SELECT * FROM org_tree ORDER BY lvl, name;
+\end{lstlisting}
+
+\section{Arrays \& JSON (Postgres superpowers)}
+\subsection{Arrays}
+\begin{lstlisting}[style=psql]
+-- literals and operators
+SELECT ARRAY[1,2,3] @> ARRAY[2];      -- contains
+SELECT 2 = ANY(ARRAY[1,2,3]);         -- membership
+-- unnest with ordinality for position-aware explode
+SELECT email, tag, ord
+FROM app.users u,
+LATERAL unnest(u.tags) WITH ORDINALITY AS t(tag, ord);
+\end{lstlisting}
+\textbf{Indexing}: GIN on arrays supports \texttt{@>}, \texttt{\&\&}, etc.
+
+\subsection{JSONB}
+\begin{lstlisting}[style=psql]
+-- access
+SELECT profile->>'lang' AS lang
+FROM app.users
+WHERE profile @> '{"marketing": {"opt_in": true}}';
+
+-- jsonpath (PG12+)
+SELECT jsonb_path_query_array(profile, '$.addresses[*].city')
+FROM app.users;
+
+-- GIN indexing for containment queries
+CREATE INDEX users_profile_gin ON app.users USING GIN (profile jsonb_path_ops);
+\end{lstlisting}
+\textbf{Tradeoff}: prefer normalized schema for frequently filtered fields; use JSONB for sparse or evolving attributes.
+
+\section{Range Types \& Exclusion Constraints}
+\begin{lstlisting}[style=psql]
+CREATE TABLE room_bookings(
+  room_id int, during tstzrange NOT NULL,
+  EXCLUDE USING GIST (room_id WITH =, during WITH &&)  -- disallow overlaps
+);
+-- include/exclude bounds
+INSERT INTO room_bookings VALUES (101, tstzrange(now(), now()+interval '2h','[)'));
+\end{lstlisting}
+
+\section{Full-Text Search (FTS)}
+\begin{lstlisting}[style=psql]
+ALTER TABLE docs ADD COLUMN tsv tsvector;
+UPDATE docs SET tsv = to_tsvector('english', coalesce(title,'') || ' ' || coalesce(body,''));
+CREATE INDEX docs_tsv_idx ON docs USING GIN (tsv);
+SELECT * FROM docs WHERE tsv @@ plainto_tsquery('english', 'quick fox');
+\end{lstlisting}
+\textbf{Note}: maintain \texttt{tsv} via trigger for write paths.
+
+\section{Views \& Materialized Views}
+\begin{lstlisting}[style=psql]
+CREATE VIEW app.active_users AS
+  SELECT * FROM app.users WHERE is_active;
+
+CREATE MATERIALIZED VIEW app.monthly_summary AS
+  SELECT date_trunc('month', created_at) AS m, count(*) c
+  FROM app.users GROUP BY 1;
+
+REFRESH MATERIALIZED VIEW CONCURRENTLY app.monthly_summary; -- needs unique index
+\end{lstlisting}
+
+\section{Sequences \& Identity}
+\begin{lstlisting}[style=psql]
+CREATE SEQUENCE app.seq START 100 INCREMENT 10 OWNED BY app.users.user_id;
+SELECT nextval('app.seq');
+
+-- identity columns (preferred)
+CREATE TABLE t(i int GENERATED BY DEFAULT AS IDENTITY);
+\end{lstlisting}
+
+\section{Constraints: DEFERRABLE \& Triggers}
+\begin{lstlisting}[style=psql]
+ALTER TABLE app.users
+  ADD CONSTRAINT org_fk FOREIGN KEY (org_id) REFERENCES app.orgs(org_id)
+  DEFERRABLE INITIALLY DEFERRED;
+
+BEGIN;
+SET CONSTRAINTS org_fk DEFERRED;
+-- batch of rows becoming valid only at txn end
+COMMIT;
+\end{lstlisting}
+
+\section{Partitioning (range, list, hash)}
+\begin{lstlisting}[style=psql]
+CREATE TABLE events(
+  id bigserial, ts timestamptz NOT NULL, payload jsonb
+) PARTITION BY RANGE (ts);
+
+CREATE TABLE events_2025_09 PARTITION OF events
+  FOR VALUES FROM ('2025-09-01') TO ('2025-10-01');
+
+-- indexing on parent propagates to partitions in PG11+
+CREATE INDEX ON events (ts);
+\end{lstlisting}
+\textbf{Use-case}: time-series/logs; enables pruning and lighter maintenance.
+
+\section{Transactions (TCL), Isolation, Locks}
+\subsection{Basics}
+\begin{lstlisting}[style=psql]
+BEGIN;
+-- ... DML ...
+SAVEPOINT s1;
+-- ... attempt risky step ...
+ROLLBACK TO SAVEPOINT s1;
+COMMIT;
+\end{lstlisting}
+
+\subsection{Isolation levels}
+\begin{lstlisting}[style=psql]
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;   -- default
+-- REPEATABLE READ (no non-repeatable reads; phantom-free in PG)
+-- SERIALIZABLE (true serializability; may abort on conflicts)
+\end{lstlisting}
+\textbf{Pitfall}: \texttt{SERIALIZABLE} can abort; retry logic required.
+
+\subsection{Explicit locks (use sparingly)}
+\begin{lstlisting}[style=psql]
+SELECT * FROM app.users WHERE user_id=42 FOR UPDATE; -- row lock
+LOCK TABLE app.users IN SHARE MODE;                   -- table lock
+\end{lstlisting}
+
+\section{Security (DCL): Roles, Privileges, Row-Level Security}
+\begin{lstlisting}[style=psql]
+-- roles
+CREATE ROLE app_user LOGIN PASSWORD '...';
+GRANT USAGE ON SCHEMA app TO app_user;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA app TO app_user;
+
+-- future-proof default privileges
+ALTER DEFAULT PRIVILEGES IN SCHEMA app
+  GRANT SELECT, INSERT, UPDATE ON TABLES TO app_user;
+
+-- Row-Level Security
+ALTER TABLE app.users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY same_org ON app.users
+USING (org_id = current_setting('app.current_org')::int);
+\end{lstlisting}
+\textbf{Link}: RLS complements application auth; be explicit about \texttt{ALTER TABLE ... FORCE ROW LEVEL SECURITY}.
+
+\section{Query Planning \& Performance Hygiene}
+\begin{lstlisting}[style=psql]
+EXPLAIN (ANALYZE, BUFFERS, VERBOSE)
+SELECT ... ;
+
+-- maintenance
+VACUUM (ANALYZE);          -- autovacuum usually handles this
+SET work_mem='64MB';       -- per-sort/hash; beware overcommit
+SET enable_seqscan=off;    -- debugging only (do not use in prod)
+\end{lstlisting}
+\textbf{Mental model}: Pick \emph{right data types}, \emph{right indexes}, \emph{right predicates}. Prefer keyset pagination over \texttt{OFFSET} for large pages.
+
+\section{Common Table Patterns \& Idioms}
+\subsection{Upsert with conflict target expression}
+\begin{lstlisting}[style=psql]
+CREATE UNIQUE INDEX users_email_lower ON app.users ((lower(email)));
+INSERT INTO app.users(email) VALUES('A@X.com')
+ON CONFLICT ((lower(email))) DO NOTHING;
+\end{lstlisting}
+
+\subsection{Keyset pagination}
+\begin{lstlisting}[style=psql]
+SELECT * FROM app.users
+WHERE created_at < $last_seen
+ORDER BY created_at DESC
+LIMIT 50;
+\end{lstlisting}
+
+\subsection{Pivot-ish aggregates}
+\begin{lstlisting}[style=psql]
+SELECT org_id,
+  count(*) FILTER (WHERE is_active) AS active,
+  count(*) FILTER (WHERE NOT is_active) AS inactive
+FROM app.users GROUP BY org_id;
+\end{lstlisting}
+
+\subsection{Distinct-on (PG feature)}
+\begin{lstlisting}[style=psql]
+SELECT DISTINCT ON (org_id) org_id, user_id, created_at
+FROM app.users
+ORDER BY org_id, created_at DESC;
+\end{lstlisting}
+
+\section{Advanced Joins \& Set Operations}
+\begin{lstlisting}[style=psql]
+-- set ops: UNION [ALL], INTERSECT, EXCEPT
+SELECT email FROM a
+UNION
+SELECT email FROM b;
+
+-- lateral joins: use outputs of a subquery per-row
+SELECT u.user_id, f.friend_id
+FROM app.users u
+LEFT JOIN LATERAL (
+  SELECT friend_id FROM app.friends WHERE user_id=u.user_id ORDER BY since DESC LIMIT 5
+) f ON true;
+\end{lstlisting}
+
+\section{Error Handling \& Constraints in Practice}
+\begin{itemize}
+  \item Prefer \texttt{NOT NULL} + defaults; \texttt{CHECK} for domain rules.
+  \item Use \texttt{DEFERRABLE} when intra-batch temporary violations are expected.
+  \item Validate emails/phones at app layer; use light DB checks only.
+\end{itemize}
+
+\section{Triggers \& PL/pgSQL (sketch)}
+\begin{lstlisting}[style=psql]
+CREATE OR REPLACE FUNCTION app.users_tsv_update()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.tsv := to_tsvector('english', coalesce(NEW.full_name,'')||' '||coalesce(NEW.email,''));
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER users_tsv_trg
+BEFORE INSERT OR UPDATE OF full_name, email ON app.users
+FOR EACH ROW EXECUTE FUNCTION app.users_tsv_update();
+\end{lstlisting}
+\textbf{Rule of thumb}: keep business logic in app layer unless DB-centric.
+
+\section{Extensions \& FDW}
+\begin{lstlisting}[style=psql]
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_trgm;    -- trigram search
+CREATE EXTENSION IF NOT EXISTS postgres_fdw;
+\end{lstlisting}
+
+\section{Temporal Patterns}
+\begin{lstlisting}[style=psql]
+-- system-versioning pattern (manual):
+valid_from timestamptz NOT NULL DEFAULT now(),
+valid_to   timestamptz,
+EXCLUDE USING GIST (id WITH =, tstzrange(valid_from, coalesce(valid_to,'infinity')) WITH &&)
+\end{lstlisting}
+
+\section{Admin Odds \& Ends (psql meta, safe defaults)}
+\begin{lstlisting}[style=psql]
+-- psql (client) meta-commands (not SQL):
+-- \d app.users      describe
+-- \dt app.*         list tables
+-- \di               list indexes
+-- \df               list functions
+\end{lstlisting}
+\textbf{Tip}: in teaching labs, align with NUS/CMU-style DB courses: write \texttt{EXPLAIN ANALYZE} for each nontrivial query and justify index choice.
+
+\section{Common Pitfalls (Nitpicks)}
+\begin{itemize}
+  \item \textbf{NULL traps}: \texttt{=} vs \texttt{IS NULL}; use \texttt{IS DISTINCT FROM}.
+  \item \textbf{Text \& collation}: cross-locale comparisons may disable index usage; normalize with \texttt{lower()} + expression index or \texttt{citext}.
+  \item \textbf{LIKE indexing}: \texttt{\%\textit{pattern}} (leading \%) cannot use btree; consider trigram (\texttt{pg\_trgm}).
+  \item \textbf{Offset pagination}: avoid large \texttt{OFFSET}; use keyset.
+  \item \textbf{CTE misuse}: avoid as “style”; prefer inline subqueries for performance unless readability \& reuse dominate.
+  \item \textbf{Serial vs identity}: prefer \texttt{GENERATED \{ALWAYS|BY DEFAULT\} AS IDENTITY}.
+  \item \textbf{Transactions}: remember that \texttt{EXCEPTION} in PL/pgSQL subtransaction rolls back only to block.
+\end{itemize}
+
+\section{Minimal End-to-End Example}
+\begin{lstlisting}[style=psql]
+BEGIN;
+CREATE SCHEMA app;
+CREATE TABLE app.orgs (
+  org_id bigserial PRIMARY KEY,
+  name   text NOT NULL UNIQUE
+);
+CREATE TABLE app.users (
+  user_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  org_id  bigint NOT NULL REFERENCES app.orgs(org_id),
+  email   text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT email_uniq_per_org UNIQUE (org_id, email)
+);
+CREATE INDEX ON app.users (created_at);
+INSERT INTO app.orgs(name) VALUES ('NUS'),('KTH') RETURNING org_id;
+
+WITH ins AS (
+  INSERT INTO app.users (org_id, email)
+  SELECT org_id, concat('user', g, '@x.com')
+  FROM app.orgs, generate_series(1,3) AS g
+  RETURNING *
+)
+SELECT * FROM ins;
+
+-- query: last 2 users per org
+SELECT * FROM (
+  SELECT org_id, email, created_at,
+         row_number() OVER (PARTITION BY org_id ORDER BY created_at DESC) AS rn
+  FROM app.users
+) t WHERE rn <= 2;
+
+COMMIT;
+\end{lstlisting}
+
+\section{Where this fits in a curriculum}
+This mirrors typical university DB courses (e.g., Berkeley CS186, CMU 15-415, NUS CS2102): master relational algebra in practice (\texttt{SELECT/FROM/WHERE/GROUP BY/HAVING}), then PG-specific power features (arrays/JSON/windows/CTEs/indexes), and finally transactional semantics (isolation/locking/RLS).
+
+\section{Further Study Pointers (conceptual)}
+Normalization vs. JSONB tradeoffs; logical vs. physical design; cost-based planning; index selectivity; MVCC internals; vacuum and freeze; partition pruning; \texttt{EXPLAIN} reading; concurrency anomalies \& serializable retries; FDW performance; \texttt{pg\_trgm}/\texttt{btree\_gin}/\texttt{btree\_gist} nuances.
 
 \end{document}
